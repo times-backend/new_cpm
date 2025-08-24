@@ -1,0 +1,32 @@
+{
+    "expresso_id": "268536",
+    "bigquery_data": null,
+    "api_data": {
+        "213804": {
+            "Client Id": 119901,
+            "Package Name": "TIL ALL CLUSTER - ENGLISH + VERNACULAR SITES STANDARD BANNER",
+            "Targeting": "Geography: India",
+            "Package Id": 6367,
+            "Website(s) with platform": "TIL All Cluster",
+            "Business Name": "All Network Cluster",
+            "Gross Rate": 71.64,
+            "Goal": 980000.0,
+            "Language": "English + Vernacular",
+            "Package_StartDate": "2025-08-18 00:00:00",
+            "Booked Amount": 70207.2,
+            "Adserver Type": "Double Click",
+            "LineItem_Details": [
+                {
+                    "Line Item Name": "26853610DOMESWITRUTILBOTHINALLCPMTILALLCLUSTENGVERSTDBANNSTANDARDBANNERENGLISHVERNACULARRNFPKG213804",
+                    "Line Item Id": 6021077,
+                    "Targeting": "Standard Banner English + Vernacular RnF ",
+                    "Comments": "",
+                    "Audience Campaign": "No",
+                    "ExtLineItems Details": []
+                }
+            ],
+            "Pricing Type": "CPM",
+            "Package_EndDate": "2025-08-31 23:59:59"
+        }
+    }
+}
