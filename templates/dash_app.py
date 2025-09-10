@@ -1008,7 +1008,7 @@ def handle_all_inputs(submit_n, clear_n, order_option_trigger, upload_contents, 
     return [dash.no_update] * 18
 
 if __name__ == '__main__':
-    app.run(debug=True) 
+    app.run(host='0.0.0.0',debug=False, port=9000) 
     print(f'submission::{submissions}')
     print(f"email id{handle_all_inputs.get('email')}")
 
