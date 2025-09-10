@@ -55,6 +55,7 @@ richmedia_presets_dict = {
     "728x90": {"adtypes": ["LEADERBOARD"], "sections": ["ROS", "HP", "HOME"], "platforms": ["WEB", "MWEB", "AMP"]},
     "320x50": {"adtypes": ["BOTTOMOVERLAY","BOTTOM OVERLAY"], "sections": ["ROS", "HP", "HOME"]},
     "320x480": {"adtypes": ["INTERSTITIAL"], "sections": ["ROS", "HP", "HOME"]},
+    "980x200": {"adtypes": ["LEADERBOARD"], "sections": ["ROS"]},
     # ... add more as needed
 }
 
