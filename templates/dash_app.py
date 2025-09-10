@@ -1,5 +1,5 @@
 import dash
-from dash import html, dcc, Input, Output, State, ctx, dash_table
+from dash import html, dcc, Input, Output, State, ctx, dash_table, ALL
 import dash_bootstrap_components as dbc
 import pandas as pd
 from datetime import datetime
@@ -38,9 +38,9 @@ from config import CREATIVES_FOLDER
 from DSD.Dsd_Download import Dsd_Download
 from dsd_read import load_dsd
 from fetch_expresso_details import fetch_full_expresso_details
-from authenticate_google_cloud import get_ads_client, setup_authentication
+from auth_utils import generate_jwt, username, plaintext_password
 
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.FLATLY], assets_folder=assets_folder)
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.FLATLY], assets_folder=assets_folder, suppress_callback_exceptions=True)
 server = app.server
 
 # Dropdown Options
@@ -60,6 +60,22 @@ platform_options = [{'label': p, 'value': p} for p in ["Web", "Mweb", "AMP", "IO
 fcap_options = [{'label': str(i), 'value': str(i)} for i in range(6)]
 currency_options = [{'label': c, 'value': c} for c in ["INR", "USD", "CAD", "AED","GBP", "EUR", "SGD"]]
 
+# Audience targeting options
+audience_targeting_options = [
+    {'label': 'Section Name (SCN)', 'value': 'section_name'},
+    {'label': 'View Segment (aud_flag)', 'value': 'view_segment'},
+    {'label': 'Language (LANG)', 'value': 'language'},
+    {'label': 'Logged In Status (loggedin)', 'value': 'logged_in'},
+    {'label': 'Template Type (templatetype)', 'value': 'template_type'},
+    {'label': 'Author (Author)', 'value': 'author'},
+    {'label': 'App ID (APMID)', 'value': 'app_id'}
+]
+
+audience_operator_options = [
+    {'label': 'is any of', 'value': 'is_any_of'},
+    {'label': 'is none of', 'value': 'is_none_of'}
+]
+
 # Get auto-detected email
 try:
     auto_detected_email = get_default_email_with_fallback()
@@ -70,7 +86,15 @@ except Exception as e:
 
 # Add email options with auto-detected email at the top
 predefined_emails = [
-  
+    'Nitesh.pandey1@timesinternet.in',
+    'Nikhil.yadav@timesinternet.in',
+    'Anurag.mishra1@timesinternet.in',
+    'Amit.jha@timesinternet.in',
+    'Sneha.som@timesinternet.in',
+    'Abhijeet.raushan@timesinternet.in',
+    'Shamayla.khan@timesinternet.in',
+    'Sudhanshu@timesinternet.in',
+    'Deepak.khundiya@timesinternet.in'
 ]
 
 # Create email options list
@@ -94,8 +118,18 @@ submissions = []
 SHEET_ID = "1LvTZELsn6m5NMkvkiEz6NjH01ZxUzHfwRYzSEK3Sphw"
 RANGE = "Sheet1"
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
-credentials = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
-sheets_client = gspread.authorize(credentials)
+
+# Make credentials optional to prevent app crash
+try:
+    credentials = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
+    sheets_client = gspread.authorize(credentials)
+    print("✅ Google Sheets credentials loaded successfully")
+except FileNotFoundError:
+    print("⚠️ credentials.json not found - Google Sheets integration disabled")
+    sheets_client = None
+except Exception as e:
+    print(f"⚠️ Error loading Google Sheets credentials: {e}")
+    sheets_client = None
 
 # App Layout
 app.layout = dbc.Container([
@@ -206,7 +240,7 @@ app.layout = dbc.Container([
                 # Two fields per row
                 dbc.Row([
                     dbc.Col(dcc.Dropdown(id='label', options=industry_options, placeholder="Select Industry Label", className="mb-2 form-field"), width=6),
-                    dbc.Col(dbc.Input(id='line_name', placeholder="Enter Line item from Expresso", type="text", className="mb-2 form-field"), width=6),
+                    dbc.Col(dbc.Input(id='line_name', placeholder="Enter Line item from Expresso", className="mb-2 form-field"), width=6),
                 ]),
                 dbc.Row([
                     dbc.Col(dcc.Dropdown(id='site', options=site_options, multi=True, placeholder="Select Pub Sites", className="mb-2 form-field"), width=6),
@@ -235,6 +269,19 @@ app.layout = dbc.Container([
                     dbc.Col(dbc.Input(id='tracking_tag', placeholder="Enter Script code", className="mb-2 form-field"), width=6),
                     dbc.Col(dbc.Input(id='banner_video', placeholder="Enter In-banner Video URL", className="mb-2 form-field"), width=6),
                 ]),
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Checkbox(
+                            id='audience-targeting-checkbox',
+                            label="Do you want to target audience?",
+                            value=False,
+                            className="mb-2"
+                        )
+                    ], width=6),
+                    dbc.Col([
+                        html.Div(id='audience-targeting-form', style={"display": "none"})
+                    ], width=12),
+                ]),
             ]),
             ], style={"marginBottom": "20px"}),
             # Label for upload creative
@@ -255,6 +302,8 @@ app.layout = dbc.Container([
             ),
             html.Div(id='upload-status', style={"marginBottom": "16px"}),
             dcc.Store(id='uploaded-files-store', data=[]),
+            dcc.Store(id='audience-targeting-data', data=[]),
+            html.Div(id='audience-clear-section', style={"display": "none"}),
             dbc.Row([
                 dbc.Col([
                     dbc.Button("Preview", id="preview-btn", color="info", className="me-2"),
@@ -347,6 +396,173 @@ def toggle_fields_visibility(order_option):
     else:
         return [{"display": "none"}]
 
+# Audience targeting checkbox callback
+@app.callback(
+    Output('audience-targeting-form', 'style'),
+    Output('audience-targeting-form', 'children'),
+    Output('audience-targeting-data', 'data'),
+    Output('audience-clear-section', 'style'),
+    Input('audience-targeting-checkbox', 'value')
+)
+def handle_audience_targeting(checkbox_value):
+    if checkbox_value:
+        # Create initial audience targeting form
+        form_content = create_audience_targeting_form(0)
+        return {"display": "block"}, form_content, [], {"display": "block"}
+    else:
+        # Clear audience targeting data
+        return {"display": "none"}, None, [], {"display": "none"}
+
+def create_audience_targeting_form(index):
+    """Create audience targeting form for a specific index"""
+    return html.Div([
+        dbc.Card([
+            dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        html.Label("Targeting Field:", className="form-label", style={"fontSize": "12px", "fontWeight": "bold"}),
+                        dcc.Dropdown(
+                            id={'type': 'audience-targeting-field', 'index': index},
+                            options=audience_targeting_options,
+                            placeholder="Select field",
+                            className="mb-2 form-field",
+                            style={"fontSize": "12px"}
+                        )
+                    ], width=3),
+                    dbc.Col([
+                        html.Label("Condition:", className="form-label", style={"fontSize": "12px", "fontWeight": "bold"}),
+                        dcc.Dropdown(
+                            id={'type': 'audience-condition', 'index': index},
+                            options=audience_operator_options,
+                            placeholder="Select condition",
+                            className="mb-2 form-field",
+                            style={"fontSize": "12px"}
+                        )
+                    ], width=2),
+                    dbc.Col([
+                        html.Label("Values:", className="form-label", style={"fontSize": "12px", "fontWeight": "bold"}),
+                        dbc.Input(
+                            id={'type': 'audience-values', 'index': index},
+                            placeholder="Enter values (comma-separated)",
+                            className="mb-2 form-field",
+                            style={"fontSize": "12px"}
+                        )
+                    ], width=4),
+                    dbc.Col([
+                        html.Label("Add Rule:", className="form-label", style={"fontSize": "12px", "fontWeight": "bold"}),
+                        html.Div([
+                            dbc.Button(
+                                "Or",
+                                id={'type': 'audience-add-btn', 'index': f'or_{index}'},
+                                color="info",
+                                size="sm",
+                                className="me-1 mb-1",
+                                style={"fontSize": "11px", "padding": "4px 8px"}
+                            ),
+                            dbc.Button(
+                                "And",
+                                id={'type': 'audience-add-btn', 'index': f'and_{index}'},
+                                color="success",
+                                size="sm",
+                                className="mb-1",
+                                style={"fontSize": "11px", "padding": "4px 8px"}
+                            )
+                        ])
+                    ], width=3)
+                ], className="mb-2")
+            ])
+        ], className="mb-2 audience-targeting-card")
+    ], id={'type': 'audience-targeting-row', 'index': index})
+
+# Handle adding new audience targeting rows
+@app.callback(
+    Output('audience-targeting-form', 'children', allow_duplicate=True),
+    Output('audience-targeting-data', 'data', allow_duplicate=True),
+    Input({'type': 'audience-add-btn', 'index': ALL}, 'n_clicks'),
+    State('audience-targeting-form', 'children'),
+    State('audience-targeting-data', 'data'),
+    prevent_initial_call=True
+)
+def handle_audience_add_buttons(n_clicks, current_children, current_data):
+    if not any(n_clicks):
+        return dash.no_update, dash.no_update
+    
+    # Find which button was clicked
+    ctx_triggered = ctx.triggered[0]
+    button_id = ctx_triggered['prop_id']
+    
+    # Extract the operator from the button ID
+    if 'or_' in button_id:
+        operator = 'Or'
+    elif 'and_' in button_id:
+        operator = 'And'
+    else:
+        return dash.no_update, dash.no_update
+    
+    # Count existing rows to determine new index
+    new_index = len(current_children) if current_children else 0
+    
+    # Create new row
+    new_row = create_audience_targeting_form(new_index)
+    
+    # Add to existing children
+    if current_children:
+        updated_children = current_children + [new_row]
+    else:
+        updated_children = [new_row]
+    
+    # Update data with new rule
+    new_rule = {
+        "id": new_index,
+        "operator": operator,
+        "targeting_field": "",
+        "condition": "",
+        "values": ""
+    }
+    
+    updated_data = current_data + [new_rule] if current_data else [new_rule]
+    
+    return updated_children, updated_data
+
+# Handle individual field updates in audience targeting
+@app.callback(
+    Output('audience-targeting-data', 'data', allow_duplicate=True),
+    Input({'type': 'audience-targeting-field', 'index': ALL}, 'value'),
+    Input({'type': 'audience-condition', 'index': ALL}, 'value'),
+    Input({'type': 'audience-values', 'index': ALL}, 'value'),
+    State('audience-targeting-data', 'data'),
+    prevent_initial_call=True
+)
+def handle_audience_field_updates(field_values, condition_values, value_inputs, current_data):
+    if not current_data:
+        return []
+    
+    # Update the data based on which field changed
+    ctx_triggered = ctx.triggered[0]
+    prop_id = ctx_triggered['prop_id']
+    
+    # Extract index from the triggered property
+    if 'audience-targeting-field' in prop_id:
+        field_type = 'targeting_field'
+        index = int(prop_id.split('"index":')[1].split('}')[0])
+        new_value = field_values[index] if index < len(field_values) else ""
+    elif 'audience-condition' in prop_id:
+        field_type = 'condition'
+        index = int(prop_id.split('"index":')[1].split('}')[0])
+        new_value = condition_values[index] if index < len(condition_values) else ""
+    elif 'audience-values' in prop_id:
+        field_type = 'values'
+        index = int(prop_id.split('"index":')[1].split('}')[0])
+        new_value = value_inputs[index] if index < len(value_inputs) else ""
+    else:
+        return current_data
+    
+    # Update the specific field in the data
+    if index < len(current_data):
+        current_data[index][field_type] = new_value
+    
+    return current_data
+
 # Main callback - remove allow_duplicate and placeholder change
 @app.callback(
     Output('submission-table', 'data'),
@@ -387,13 +603,16 @@ def toggle_fields_visibility(order_option):
     State('impression_tracker', 'value'),
     State('tracking_tag', 'value'),
     State('banner_video', 'value'),
+    State('audience-targeting-checkbox', 'value'),
+    State('audience-targeting-data', 'data'),
     State('order_option', 'value'),
     State('uploaded-files-store', 'data'),
     prevent_initial_call=True
 )
 def handle_all_inputs(submit_n, clear_n, order_option_trigger, upload_contents, upload_filenames,
                      email, order_id, expresso, label, line_name, site, platform, geo_input, fcap, currency,
-                     impressions, destination_url, impression_tracker, tracking_tag, banner_video, order_option, stored_files):
+                     impressions, destination_url, impression_tracker, tracking_tag, banner_video, 
+                     audience_targeting_checkbox, audience_targeting_data, order_option, stored_files):
     
     if not ctx.triggered:
         return [dash.no_update] * 18
@@ -476,7 +695,7 @@ def handle_all_inputs(submit_n, clear_n, order_option_trigger, upload_contents, 
             return ([], None, None, None, None, [], [], None, None, None, None, None, None, None, None, False, None, [])
         except Exception as e:
             print(f"Error in clear operation: {e}")
-            return [dash.no_update] * 14 + [f"Error clearing data: {str(e)}", True, None, dash.no_update]
+            return [dash.no_update] * 16 + [f"Error clearing data: {str(e)}", True]
 
     # Order option logic
     if triggered_id == 'order_option':
@@ -490,29 +709,29 @@ def handle_all_inputs(submit_n, clear_n, order_option_trigger, upload_contents, 
         try:
             # Validate expresso ID
             if not expresso:
-                return [dash.no_update] * 14 + ["Enter Expresso ID", True, None, dash.no_update]
+                return [dash.no_update] * 16 + ["Enter Expresso ID", True]
             try:
                 expresso_number = int(expresso)
             except (ValueError, TypeError):
-                return [dash.no_update] * 14 + ["Expresso ID must be a numerical value", True, None, dash.no_update]
+                return [dash.no_update] * 16 + ["Expresso ID must be a numerical value", True]
 
             # Validate required fields
             if order_option == 'existing' and not order_id:
-                return [dash.no_update] * 14 + ["Enter Order ID", True, None, dash.no_update]
+                return [dash.no_update] * 16 + ["Enter Order ID", True]
             if not line_name:
-                return [dash.no_update] * 14 + ["Enter Line item from Expresso", True, None, dash.no_update]
+                return [dash.no_update] * 16 + ["Enter Line item from Expresso", True]
             if not site:
-                return [dash.no_update] * 14 + ["Select Pub Sites", True, None, dash.no_update]
+                return [dash.no_update] * 16 + ["Select Pub Sites", True]
             if not platform:
-                return [dash.no_update] * 14 + ["Select Platforms", True, None, dash.no_update]
+                return [dash.no_update] * 16 + ["Select Platforms", True]
             if not geo_input:
-                return [dash.no_update] * 14 + ["Enter geos, separated by commas", True, None, dash.no_update]
+                return [dash.no_update] * 16 + ["Enter geos, separated by commas", True]
             if not fcap:
-                return [dash.no_update] * 14 + ["Enter FCAP Value", True, None, dash.no_update]
+                return [dash.no_update] * 16 + ["Enter FCAP Value", True]
             if not currency:
-                return [dash.no_update] * 14 + ["Select Currency", True, None, dash.no_update]
+                return [dash.no_update] * 16 + ["Select Currency", True]
             if not impressions:
-                return [dash.no_update] * 14 + ["Enter Goal(Impression)", True, None, dash.no_update]
+                return [dash.no_update] * 16 + ["Enter Goal (CPM)", True]
 
             # Process the submission
             # Clean and validate geo input
@@ -524,7 +743,11 @@ def handle_all_inputs(submit_n, clear_n, order_option_trigger, upload_contents, 
                     geo_list = [str(g).strip() for g in geo_input if str(g).strip()]
             
             if not geo_list:
-                return [dash.no_update] * 14 + ["Enter valid geos, separated by commas", True, None, dash.no_update]
+                return [dash.no_update] * 16 + ["Enter valid geos, separated by commas", True]
+
+            # Process audience targeting data
+            if not audience_targeting_data:
+                audience_targeting_data = []
 
             line_item_data = {
                 "email": email,
@@ -541,7 +764,8 @@ def handle_all_inputs(submit_n, clear_n, order_option_trigger, upload_contents, 
                 "destination_url": destination_url,
                 "impression_tracker": impression_tracker or '',
                 "tracking_tag": tracking_tag or '',
-                "banner_video": banner_video or ''
+                "banner_video": banner_video or '',
+                "audience_targeting_data": audience_targeting_data
             }
 
             print(f"Initial line_item_data::{line_item_data}")
@@ -569,13 +793,13 @@ def handle_all_inputs(submit_n, clear_n, order_option_trigger, upload_contents, 
             
             # Validate and clean data
             if not line_item_data['site']:
-                return [dash.no_update] * 14 + ["Select Pub Sites", True, None, dash.no_update]
+                return [dash.no_update] * 16 + ["Select Pub Sites", True]
             if not line_item_data['platforms']:
-                return [dash.no_update] * 14 + ["Select Platforms", True, None, dash.no_update]
+                return [dash.no_update] * 16 + ["Select Platforms", True]
             if not line_item_data['geo']:
-                return [dash.no_update] * 14 + ["Enter geos, separated by commas", True, None, dash.no_update]
+                return [dash.no_update] * 16 + ["Enter geos, separated by commas", True]
             if not line_item_data['line_name']:
-                return [dash.no_update] * 14 + ["Enter Line item from Expresso", True, None, dash.no_update]
+                return [dash.no_update] * 16 + ["Enter Line item from Expresso", True]
             
             # Ensure numeric values are valid
             try:
@@ -591,7 +815,7 @@ def handle_all_inputs(submit_n, clear_n, order_option_trigger, upload_contents, 
 
             print(f"Validated line_item_data::{line_item_data}")
 
-            client = get_ads_client()
+            client = ad_manager.AdManagerClient.LoadFromStorage("googleads1.yaml")
             
             # Handle site filter exactly as in single_line.py
             site_filter = site if isinstance(site, list) else [site]
@@ -652,51 +876,29 @@ def handle_all_inputs(submit_n, clear_n, order_option_trigger, upload_contents, 
                         line_item_data['End_date'] = matching_package.get('Package_EndDate')
                         line_item_data['expresso_line_item_found'] = True
                         line_item_data['expresso_line_item_name'] = matching_line_item.get("Line Item Name")
+                        package_id = matching_package.get('Package Id')
                         print(f"✅ Found matching line item in Expresso: {matching_line_item.get('Line Item Name')}")
                     else:
                         line_item_data['CPM_Rate'] = campaign_package.get('Gross Rate')
                         line_item_data['Start_date'] = campaign_package.get('Package_StartDate')
                         line_item_data['End_date'] = campaign_package.get('Package_EndDate')
                         line_item_data['expresso_line_item_found'] = False
+                        package_id = campaign_package.get('Package Id')
                         print(f"ℹ️ No exact matching line item found in Expresso for: {line_name}")
             except Exception as e:
                 print(f"Error fetching expresso details: {e}")
-                return [dash.no_update] * 14 + [f"Error fetching expresso details: {str(e)}", True, None, dash.no_update]
+                return [dash.no_update] * 16 + [f"Error fetching expresso details: {str(e)}", True]
 
             try:
                 if not order_id or order_id == 'None' or order_id is None:
                     # Create new order name
                     order_name,advertiser_name,dsd_file_path=Dsd_Download(expresso_number)
                     trafficker_name = "Nitesh Pandey"
-                    
-                    # Get geo string - use "Multiple GEO" if more than one geo
-                    geo_list = [g.strip() for g in geo_input.split(',') if g.strip()]
-                    geo_str = geo_list[0] if len(geo_list) == 1 else "Multiple GEO"
-                    
-                    # Get package details from expresso data
-                    package_id = None
-                    start_date = None
-                    if matching_package:
-                        package_id = matching_package.get('Package Id')
-                        start_date_str = matching_package.get('Package_StartDate')
-                        if start_date_str:
-                            try:
-                                start_date = datetime.strptime(start_date_str, '%Y-%m-%d %H:%M:%S')
-                            except Exception as e:
-                                print(f"Error parsing start date: {e}")
-                                start_date = datetime.now()
-                    
-                    # Use start date if available, otherwise use current date
-                    if start_date:
-                        order_day = start_date.strftime("%d")
-                        order_month = start_date.strftime("%B")
-                    else:
-                        order_day = datetime.now().strftime("%d")
-                        order_month = datetime.now().strftime("%B")
-                    
-                    # Add package ID to order name if available
-                    package_str = f"{package_id}" if package_id else ""
-                    new_order_name = f"{order_name}_{geo_str}_{order_day}_{order_month}_{package_str}"
+                    current_month = datetime.now().strftime("%B")
+                    current_day = datetime.now().strftime("%d")
+                    geo_str = geo_input.split(',')[0].strip() if geo_input else "Multiple Geo"
+                    package_str = package_id if package_id else "NoPackage"
+                    new_order_name = f"{order_name}_{geo_str}_{current_day}_{current_month}_{package_str}" 
                     # Create new order
                     order_id = create_order(client, advertiser_name, trafficker_name, new_order_name,line_item_data)  
                     print(f"Created new order with ID: {order_id}")
@@ -718,7 +920,7 @@ def handle_all_inputs(submit_n, clear_n, order_option_trigger, upload_contents, 
                     # Log location error
                     logger.log_line_creation_error(e, line_name, str(order_id), session_id)
                     
-                    return [dash.no_update] * 14 + [error_message, True, None, dash.no_update]
+                    return [dash.no_update] * 16 + [error_message, True]
                 except Exception as e:
                     # Check if it's a creative creation error but line item was created
                     error_str = str(e)
@@ -796,18 +998,14 @@ def handle_all_inputs(submit_n, clear_n, order_option_trigger, upload_contents, 
             except Exception as e:
                 error_message = f"Error creating line item: {str(e)}"
                 print(error_message)
-                return [dash.no_update] * 14 + [error_message, True, None, dash.no_update]
+                return [dash.no_update] * 16 + [error_message, True]
                 
         except Exception as e:
             error_message = f"Error in submission: {str(e)}"
             print(error_message)
-            return [dash.no_update] * 14 + [error_message, True, None, dash.no_update]
+            return [dash.no_update] * 16 + [error_message, True]
             
     return [dash.no_update] * 18
-
-
-
-
 
 if __name__ == '__main__':
     app.run(debug=True) 
@@ -823,70 +1021,115 @@ app.index_string = '''
         {%favicon%}
         {%css%}
         <style>
-            * {
-                margin: 0 !important;
-                padding: 0 !important;
-                box-sizing: border-box !important;
+    *, *::before, *::after {
+        box-sizing: border-box;
+    }
+
+    html, body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow-x: auto;
+        font-family: Arial, sans-serif;
+        background-color: #f8f9fa;
+    }
+
+    #react-entry-point {
+        height: 100vh;
+    }
+
+    /* Form and select styling */
+    .dash-dropdown,
+    .form-field,
+    .Select-control,
+    .Select--single,
+    .Select-placeholder,
+    .Select-value,
+    .Select-input,
+    .Select-menu {
+        min-height: 40px;
+        font-size: 1rem;
+        background: #fff;
+        padding-left: 12px;
+        padding-right: 12px;
+        display: flex;
+        align-items: center;
+	width: 100%;
+    }
+
+    input.form-field.form-control {
+        line-height: 2;
+        height: 40px;
+    }
+    .Select-control {
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+    }
+
+    .Select-placeholder,
+    .Select-value {
+        font-size: 1rem;
+        color: #6c757d;
+        line-height: 2;
+    }
+
+    .Select-arrow-zone {
+        display: flex;
+        align-items: center;
+        padding: 0;
+    }
+
+    .Select-menu-outer .Select-menu {
+        border-radius: 8px;
+        font-size: 1rem;
+        z-index: 9999;
+        overflow-y: auto;
+	min-width: 100%;
+        max-height: 200px;
+    }
+
+    .form-field:focus,
+    .Select-control:focus {
+        border-color: #2684ff;
+        box-shadow: 0 0 0 2px rgba(38, 132, 255, 0.2);
+        outline: none;
+    }
+    /* Force multi-select values to stay in one line */
+    /* Force multi-select values to align horizontally */
+.Select--multi .Select-multi-value-wrapper {
+    display: flex !important;
+    flex-wrap: nowrap !important;  /* Prevent line breaks */
+    overflow-x: auto !important;   /* Horizontal scroll if too many */
+    white-space: nowrap !important;
+    align-items: center;
+}
+
+/* Each value stays inline */
+.Select--multi .Select-value {
+    display: inline-flex !important;
+    width: auto !important;
+    max-width: none !important;
+    align-items: center;
+    flex: 0 0 auto !important;
+    margin: 0 6px 0 0 !important;
+    padding: 2px 6px !important;
+    border-radius: 4px;
+    background: #f0f0f0 !important; /* optional chip background */
+    white-space: nowrap !important;
+}
+            .form-label {
+                color: #495057 !important;
+                margin-bottom: 4px !important;
             }
-            html, body {
-                height: 100% !important;
-                overflow-x: hidden !important;
-                margin: 0 !important;
-                padding: 0 !important;
-            }
-            #react-entry-point {
-                height: 100vh !important;
-                margin: 0 !important;
-                padding: 0 !important;
-            }
-            .form-field, .Select-control, .Select--single, .Select-placeholder, .Select-value, .Select-input, .Select-menu-outer, .Select-menu {
-                min-height: 40px !important;
-                height: 40px !important;
-                font-size: 1rem !important;
+            .audience-targeting-card {
+                background: #f8f9fa !important;
+                border: 1px solid #dee2e6 !important;
                 border-radius: 8px !important;
-                border: 1px solid #ced4da !important;
-                background: #fff !important;
-                box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-                padding-left: 12px !important;
-                padding-right: 12px !important;
-                box-sizing: border-box;
-                display: flex;
-                align-items: center;
+                padding: 12px !important;
+                margin-bottom: 8px !important;
             }
-            input.form-field.form-control {
-                line-height: 2 !important;
-                height: 40px !important;
-            }
-            .Select-control {
-                border: 1px solid #ced4da !important;
-                background: #fff !important;
-                box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-                padding-left: 12px !important;
-                padding-right: 12px !important;
-                min-height: 40px !important;
-                height: 40px !important;
-                border-radius: 8px !important;
-                display: flex;
-                align-items: center;
-            }
-            .Select-placeholder, .Select-value {
-                font-size: 1rem !important;
-                color: #6c757d !important;
-                line-height: 2.0 !important;
-            }
-            .Select-arrow-zone {
-                padding-top: 0 !important;
-                padding-bottom: 0 !important;
-                display: flex;
-                align-items: center;
-            }
-            .Select-menu-outer {
-                border-radius: 8px !important;
-                font-size: 1rem !important;
-            }
-            .form-field:focus, .Select-control:focus {
+            .audience-targeting-card:hover {
                 border-color: #2684ff !important;
-                box-shadow: 0 0 0 2px rgba(38,132,255,0.2);
+                box-shadow: 0 2px 4px rgba(38,132,255,0.1) !important;
             }
         </style>
     </head>

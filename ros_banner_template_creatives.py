@@ -137,8 +137,8 @@ def create_custom_template_creatives(client, order_id, line_item_id, destination
     lica_service = client.GetService('LineItemCreativeAssociationService', version='v202408')
     logging.info(f"Creating creatives for size: {size_name}")
 
-    # For AI template (12435443), impression/click template (12330939), In-Banner Video template (12344286), 320x100 special template (12363950), 300x250 richmedia template (12460223), no destination template (12473441), and no landing page template (12399020), destination_url is not strictly required
-    if template_id in [12435443, 12330939, 12344286, 12363950, 12460223, 12473441, 12399020]:
+    # For AI template (12435443), impression/click template (12330939), In-Banner Video template (12344286), 320x100 special template (12363950), 300x250 richmedia template (12460223), 300x600 richmedia template (12443458), no destination template (12473441), and no landing page template (12399020), destination_url is not strictly required
+    if template_id in [12435443, 12330939, 12344286, 12363950, 12460223, 12443458, 12473441, 12399020]:
         if not all([order_id, line_item_id, expresso_id]):
             raise ValueError("Required fields must be provided (order_id, line_item_id, expresso_id)")
     else:
@@ -761,6 +761,8 @@ def create_custom_template_creatives(client, order_id, line_item_id, destination
                     targeting_name = "Mweb_PPD"  # Must match the targeting name used in line item creation
                 elif width == 300 and height == 250 and line_type == "richmedia":
                     targeting_name = "Mrec_ex"  # Must match the targeting name used in line item creation for 300x250 richmedia
+                elif width == 300 and height == 600 and line_type == "richmedia":
+                    targeting_name = "Tower_ex"  # Must match the targeting name used in line item creation for 300x600 richmedia
                 else:
                     targeting_name = f'{width}x{height}'
 

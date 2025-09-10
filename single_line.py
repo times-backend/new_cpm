@@ -51,7 +51,7 @@ standard_presets_dict = {
 richmedia_presets_dict = {
     "300x250": {"adtypes": ["MREC_1"], "sections": ["ROS", "HP", "HOME"], "platforms": ["WEB"]},
     "320x100": {"adtypes": ["TOPBANNER", "TOPBANNER", "TOPBANNER" ], "sections": ["ROS", "HP", "HOME"], "platforms": ["MWEB"]},
-    "300x600": {"adtypes": ["FLYINGCARPET", "FLYING_CARPET", "TOWER"], "sections": ["ROS", "HP", "HOME"], "platforms": ["WEB", "MWEB", "AMP"]},
+    "300x600": {"adtypes": ["TOWER"], "sections": ["ROS", "HP", "HOME"], "platforms": ["WEB"]},
     "728x90": {"adtypes": ["LEADERBOARD"], "sections": ["ROS", "HP", "HOME"], "platforms": ["WEB", "MWEB", "AMP"]},
     "320x50": {"adtypes": ["BOTTOMOVERLAY","BOTTOM OVERLAY"], "sections": ["ROS", "HP", "HOME"]},
     "320x480": {"adtypes": ["INTERSTITIAL"], "sections": ["ROS", "HP", "HOME"]},
@@ -176,17 +176,13 @@ def fetch_images_and_presets(folder_path, available_presets, presets_dict):
                 counter = len(image_size_map[preset])
                 size_key = f"{preset}_{counter}" if counter > 1 else preset
                 
-                # Check if this is a 2x image
-                is_2x = '2x' in filename.lower()
-                
                 detected_presets[size_key] = {
                     "adtype_filter": presets_dict[preset]["adtypes"],
                     "section_filter": presets_dict[preset]["sections"],
                     "image_path": image_path,
-                    "base_size": preset,
-                    "is_2x": is_2x
+                    "base_size": preset
                 }
-                print(f"Added creative for size {preset} with key {size_key}: {filename} {'(2x density)' if is_2x else ''}")
+                print(f"Added creative for size {preset} with key {size_key}: {filename}")
     
     return detected_presets, image_files
 
@@ -512,149 +508,28 @@ def read_tag_file():
         return None
 
 def check_line_item_name_exists(client, order_id, line_name_base):
-    """Check if a line item with similar name already exists in the order or globally"""
+    """Check if a line item with similar name already exists in the order"""
     try:
         line_item_service = client.GetService('LineItemService', version='v202408')
         pql_service = client.GetService('PublisherQueryLanguageService', version='v202408')
         
-        # Clean the line name to ensure consistency
-        cleaned_line_name = line_name_base.strip() if line_name_base else ''
-        print(f"🔍 Checking for duplicates of line name: '{cleaned_line_name}'")
-        print(f"🔍 Line name length: {len(cleaned_line_name)} characters")
+        # Query for line items in the order with similar names
+        query = f"SELECT Id, Name FROM Line_Item WHERE OrderId = {order_id} AND Name LIKE '{line_name_base}%'"
+        statement = {'query': query}
+        response = pql_service.select(statement)
         
-        # Escape single quotes in the line name for PQL query
-        escaped_line_name = cleaned_line_name.replace("'", "\\'")
-        
-        # First check for exact matches globally (this is what causes DUPLICATE_OBJECT error)
-        exact_query = f"SELECT Id, Name, OrderId FROM Line_Item WHERE Name = '{escaped_line_name}'"
-        print(f"🔍 Executing exact match query: {exact_query}")
-        exact_statement = {'query': exact_query}
-        exact_response = pql_service.select(exact_statement)
-        
-        print(f"🔍 Exact query response type: {type(exact_response)}")
-        if hasattr(exact_response, 'rows') and exact_response.rows:
-            print(f"🔍 Exact query found {len(exact_response.rows)} rows")
-            existing_exact = [(row.values[0].value, row.values[1].value, row.values[2].value) 
-                             for row in exact_response.rows]
-            print(f"⚠️ Found {len(existing_exact)} existing line items with EXACT name '{line_name_base}':")
-            for line_id, name, existing_order_id in existing_exact:
-                print(f"   - Line ID: {line_id}, Name: {name}, Order ID: {existing_order_id}")
+        if 'rows' in response and response['rows']:
+            existing_names = [row['values'][1]['value'] for row in response['rows']]
+            print(f"⚠️ Found {len(existing_names)} existing line items with similar names: {existing_names}")
             return True
         else:
-            print(f"🔍 No rows found in exact query response")
-        
-        # Also check for the original name if it was different from cleaned name
-        if line_name_base != cleaned_line_name:
-            original_escaped = line_name_base.replace("'", "\\'")
-            original_query = f"SELECT Id, Name, OrderId FROM Line_Item WHERE Name = '{original_escaped}'"
-            print(f"🔍 Executing original name query: {original_query}")
-            original_statement = {'query': original_query}
-            original_response = pql_service.select(original_statement)
-            
-            if hasattr(original_response, 'rows') and original_response.rows:
-                print(f"🔍 Original name query found {len(original_response.rows)} rows")
-                existing_original = [(row.values[0].value, row.values[1].value, row.values[2].value) 
-                                   for row in original_response.rows]
-                print(f"⚠️ Found {len(existing_original)} existing line items with ORIGINAL name '{line_name_base}':")
-                for line_id, name, existing_order_id in existing_original:
-                    print(f"   - Line ID: {line_id}, Name: {name}, Order ID: {existing_order_id}")
-                return True
-        
-        # Also try a broader search to catch any similar names
-        # Use LIKE with wildcards to find potential matches
-        like_query = f"SELECT Id, Name, OrderId FROM Line_Item WHERE Name LIKE '%{escaped_line_name}%'"
-        print(f"🔍 Executing LIKE query: {like_query}")
-        like_statement = {'query': like_query}
-        like_response = pql_service.select(like_statement)
-        
-        print(f"🔍 LIKE query response type: {type(like_response)}")
-        if hasattr(like_response, 'rows') and like_response.rows:
-            print(f"🔍 LIKE query found {len(like_response.rows)} rows")
-            existing_like = [(row.values[0].value, row.values[1].value, row.values[2].value) 
-                           for row in like_response.rows]
-            print(f"⚠️ Found {len(existing_like)} existing line items with SIMILAR names to '{line_name_base}':")
-            for line_id, name, existing_order_id in existing_like:
-                print(f"   - Line ID: {line_id}, Name: {name}, Order ID: {existing_order_id}")
-                # Check if it's an exact match
-                if name == line_name_base:
-                    print(f"   ⚠️ EXACT MATCH FOUND: This will cause DUPLICATE_OBJECT error!")
-                    return True
-        
-        # Then check for similar names in the same order (for good measure)
-        similar_query = f"SELECT Id, Name FROM Line_Item WHERE OrderId = {order_id} AND Name LIKE '{escaped_line_name}%'"
-        print(f"🔍 Executing order-specific query: {similar_query}")
-        similar_statement = {'query': similar_query}
-        similar_response = pql_service.select(similar_statement)
-        
-        if hasattr(similar_response, 'rows') and similar_response.rows:
-            existing_similar = [row.values[1].value for row in similar_response.rows]
-            print(f"⚠️ Found {len(existing_similar)} existing line items with similar names in order {order_id}: {existing_similar}")
-            # Check for exact matches in this order too
-            for existing_name in existing_similar:
-                if existing_name == cleaned_line_name or existing_name == line_name_base:
-                    print(f"   ⚠️ EXACT MATCH in same order: This will cause DUPLICATE_OBJECT error!")
-                    return True
-        
-        # Additional comprehensive search - try different query approaches
-        print(f"🔍 Performing comprehensive search for potential duplicates...")
-        
-        # Try searching without LIKE operators to catch exact matches that might be missed
-        # Also check for soft-deleted items and different status conditions
-        comprehensive_queries = [
-            f"SELECT Id, Name, OrderId, Status FROM Line_Item WHERE Name = '{escaped_line_name}' LIMIT 10",
-            f"SELECT Id, Name, OrderId, Status FROM Line_Item WHERE OrderId = {order_id} LIMIT 100",
-            f"SELECT Id, Name, OrderId, Status FROM Line_Item WHERE Name = '{escaped_line_name}' AND Status IN ('ACTIVE', 'PAUSED', 'INACTIVE') LIMIT 10",
-            # Check total count in order - PQL requires column names for COUNT
-            f"SELECT COUNT(Id) AS count FROM Line_Item WHERE OrderId = {order_id}",
-            # Check for any line items with same targeting
-            f"SELECT Id, Name FROM Line_Item WHERE OrderId = {order_id} AND Id IN (SELECT LineItemId FROM LineItemTargeting)"
-        ]
-        
-        for i, comp_query in enumerate(comprehensive_queries):
-            try:
-                print(f"🔍 Executing comprehensive query {i+1}: {comp_query}")
-                comp_statement = {'query': comp_query}
-                comp_response = pql_service.select(comp_statement)
-                
-                if hasattr(comp_response, 'rows') and comp_response.rows:
-                    print(f"🔍 Comprehensive query {i+1} found {len(comp_response.rows)} rows")
-                    for row in comp_response.rows:
-                        existing_name = row.values[1].value
-                        existing_order_id = row.values[2].value if len(row.values) > 2 else 'Unknown'
-                        existing_status = row.values[3].value if len(row.values) > 3 else 'Unknown'
-                        
-                        # Check for exact match with cleaned name or original name
-                        if existing_name == cleaned_line_name or existing_name == line_name_base:
-                            print(f"   ⚠️ COMPREHENSIVE SEARCH FOUND EXACT MATCH!")
-                            print(f"   - Existing Name: '{existing_name}'")
-                            print(f"   - Target Name: '{cleaned_line_name}'")
-                            print(f"   - Order ID: {existing_order_id}")
-                            print(f"   - Status: {existing_status}")
-                            return True
-                else:
-                    print(f"🔍 Comprehensive query {i+1} found no rows")
-            except Exception as e:
-                print(f"⚠️ Error in comprehensive query {i+1}: {e}")
-        
-        print(f"✅ No existing line items found with exact or similar name: {cleaned_line_name}")
-        return False
-        
+            print(f"✅ No existing line items found with base name: {line_name_base}")
+            return False
     except Exception as e:
         print(f"⚠️ Error checking for existing line item names: {e}")
-        print(f"⚠️ Error type: {type(e).__name__}")
-        print(f"⚠️ Will continue with creation but may encounter DUPLICATE_OBJECT error")
         return False  # Continue with creation if check fails
 
-
-
-
-
 def single_line(client, order_id, line_item_data, line_name):
-    # Import modules needed for retry logic
-    import random
-    import uuid
-    import string
-    
     # Generate session ID for this line creation
     session_id = str(uuid.uuid4())
     start_time = time.time()
@@ -1362,207 +1237,36 @@ def single_line(client, order_id, line_item_data, line_name):
     expresso_line_item_found = line_item_data.get('expresso_line_item_found', False)
     expresso_line_item_name = line_item_data.get('expresso_line_item_name', '')
     
-    # Clean the line name first to ensure consistency
-    cleaned_line_name = line_name.strip() if line_name else ''
-    
-    # Additional character cleanup and validation
-    # Remove any non-printable characters and normalize whitespace
-    printable_chars = set(string.printable)
-    cleaned_line_name = ''.join(char if char in printable_chars else '' for char in cleaned_line_name)
-    cleaned_line_name = ' '.join(cleaned_line_name.split())  # Normalize whitespace
-    
-    print(f"🔧 Original line name: '{line_name}' (length: {len(line_name)})")
-    print(f"🔧 Cleaned line name: '{cleaned_line_name}' (length: {len(cleaned_line_name)})")
-    
-    # Check for any character differences that might cause API issues
-    if line_name != cleaned_line_name:
-        print(f"🔧 Character cleanup applied - differences detected:")
-        for i, (orig, clean) in enumerate(zip(line_name, cleaned_line_name + ' ' * len(line_name))):
-            if orig != clean:
-                print(f"   Position {i}: '{orig}' (ord: {ord(orig)}) -> '{clean}' (ord: {ord(clean) if clean else 0})")
-                if i > 5:  # Limit output for very long differences
-                    print(f"   ... (truncated after showing first 5 differences)")
-                    break
-    
-    # Validate the order and check for potential issues
-    print(f"🔍 Performing comprehensive order validation for order {order_id}")
-    try:
-        order_service = client.GetService('OrderService', version='v202408')
-        pql_service = client.GetService('PublisherQueryLanguageService', version='v202408')
+    if expresso_line_item_found:
+        print(f"📋 Expresso line item found: {expresso_line_item_name}")
+        print(f"📋 Requested line item name: {line_name}")
         
-        # Check order status and details using proper PQL syntax
-        statement = {
-            'query': f'SELECT Id, Name, Status FROM Orders WHERE Id = {order_id} LIMIT 1'
-        }
-        print(f"🔍 Executing order validation query: {statement['query']}")
-        orders = order_service.getOrdersByStatement(statement)
-        
-        if orders and len(orders) > 0:
-            order = orders[0]
-            print(f"✅ Order found - ID: {order['id']}, Name: {order['name']}, Status: {order['status']}")
-            
-            # Check order status
-            if order['status'] not in ['DRAFT', 'PENDING_APPROVAL', 'APPROVED']:
-                print(f"⚠️ Warning: Order status is {order['status']}, which might affect line item creation")
-            
-            # Check for potential uniqueness constraints using proper PQL syntax
-            unique_checks = [
-                # Basic line item check
-                f"SELECT Id, Name FROM LineItems WHERE OrderId = {order_id} LIMIT 100",
-                # Time overlap check
-                f"SELECT Id, Name, StartDateTime, EndDateTime FROM LineItems WHERE OrderId = {order_id} LIMIT 100",
-                # Cost settings check
-                f"SELECT Id, Name, CostType, CostPerUnit FROM LineItems WHERE OrderId = {order_id} LIMIT 100"
-            ]
-            
-            print(f"🔍 Checking for existing line items and potential conflicts...")
-            for i, check in enumerate(unique_checks, 1):
-                try:
-                    check_statement = {'query': check}
-                    check_response = pql_service.select(check_statement)
-                    
-                    if hasattr(check_response, 'rows') and check_response.rows:
-                        print(f"📊 Check {i} found {len(check_response.rows)} line items:")
-                        for row in check_response.rows:
-                            values = [val.value for val in row.values]
-                            if i == 1:  # Basic line item check
-                                print(f"   - Line Item: ID={values[0]}, Name='{values[1]}'")
-                            elif i == 2:  # Time overlap check
-                                print(f"   - Line Item: ID={values[0]}, Name='{values[1]}', Start={values[2]}, End={values[3]}")
-                            elif i == 3:  # Cost settings check
-                                print(f"   - Line Item: ID={values[0]}, Name='{values[1]}', CostType={values[2]}, CostPerUnit={values[3]}")
-                    else:
-                        print(f"✅ Check {i}: No existing line items found")
-                        
-                except Exception as check_error:
-                    print(f"⚠️ Error during check {i}:")
-                    print(f"   - Query: {check}")
-                    print(f"   - Error: {check_error}")
-                    print(f"   - Error type: {type(check_error).__name__}")
-            
-            # Check for order-level settings that might affect line item creation
-            print(f"🔍 Checking order-level settings...")
-            settings_query = f"SELECT Id, AllowOverbook, ExternalOrderId FROM Order WHERE Id = {order_id} LIMIT 1"
-            try:
-                settings_statement = {'query': settings_query}
-                print(f"🔍 Executing settings query: {settings_query}")
-                settings_response = pql_service.select(settings_statement)
-                if hasattr(settings_response, 'rows') and settings_response.rows:
-                    settings = settings_response.rows[0]
-                    print(f"✅ Order settings found:")
-                    print(f"   - Order ID: {settings.values[0].value}")
-                    print(f"   - Allow Overbook: {settings.values[1].value}")
-                    print(f"   - External Order ID: {settings.values[2].value}")
-                else:
-                    print("⚠️ No order settings found")
-            except Exception as settings_error:
-                print(f"⚠️ Error checking order settings:")
-                print(f"   - Query: {settings_query}")
-                print(f"   - Error: {settings_error}")
-                print(f"   - Error type: {type(settings_error).__name__}")
-                
+        # Check if the requested name is based on the Expresso name
+        if expresso_line_item_name == line_name:
+            # Exact match - this means user wants to create GAM version of existing Expresso line
+            print(f"ℹ️ Exact match with Expresso - using requested name as-is for GAM")
+            unique_line_name = line_name
+        elif line_name.startswith(expresso_line_item_name + "_"):
+            # User added suffix to Expresso name (like _NBT) - this is intentional differentiation
+            print(f"ℹ️ Requested name appears to be Expresso name + suffix - using as-is")
+            unique_line_name = line_name
         else:
-            print(f"❌ Order {order_id} not found or inaccessible!")
-            raise ValueError(f"Order {order_id} not found or inaccessible")
-            
-    except Exception as e:
-        print(f"⚠️ Error during order validation: {e}")
-        print(f"⚠️ Error type: {type(e).__name__}")
-        print(f"⚠️ Continuing with line item creation despite validation errors")
-    
-    # First check if the line exists in GAM by name
-    line_item_service = client.GetService('LineItemService', version='v202408')
-    
-    # Check for exact name match in GAM
-    try:
-        gam_statement = {
-            'query': f'WHERE name = "{cleaned_line_name}" AND orderId = {order_id}',
-            'values': None
-        }
-        print(f"🔍 Checking if line item exists in GAM with name: {cleaned_line_name}")
-        gam_response = line_item_service.getLineItemsByStatement(gam_statement)
-        
-        if gam_response and gam_response['totalResultSetSize'] > 0:
-            existing_gam_line = gam_response['results'][0]
-            print(f"✅ Found existing line item in GAM:")
-            print(f"   - ID: {existing_gam_line['id']}")
-            print(f"   - Name: {existing_gam_line['name']}")
-            print(f"   - Order ID: {existing_gam_line['orderId']}")
-            print(f"   - Status: {existing_gam_line['status']}")
-            raise ValueError(f"Line item already exists in GAM with ID: {existing_gam_line['id']}")
-    except Exception as e:
-        if 'NOT_FOUND' not in str(e) and 'INVALID_QUERY' not in str(e):
-            print(f"⚠️ Error checking GAM for existing line item: {e}")
-            print(f"⚠️ Error type: {type(e).__name__}")
-    
-    # Check if this line exists in Expresso (without _TOI suffix)
-    expresso_line_item_id = None
-    expresso_line_item_details = None
-    base_name = cleaned_line_name.rstrip('_TOI')
-    
-    if 'LineItem_Details' in line_item_data:
-        for item in line_item_data.get('LineItem_Details', []):
-            if isinstance(item, dict):  # Ensure item is a dictionary
-                item_name = item.get('Line Item Name', '')
-                if item_name == base_name:
-                    expresso_line_item_id = item.get('Line Item Id')
-                    expresso_line_item_details = item
-                    print(f"✅ Found matching line item in Expresso:")
-                    print(f"   - ID: {expresso_line_item_id}")
-                    print(f"   - Name: {item_name}")
-                    print(f"   - Targeting: {item.get('Targeting', '')}")
-                    break
-    
-    if expresso_line_item_id:
-        print(f"🔍 Checking if Expresso line item {expresso_line_item_id} exists in GAM...")
-        try:
-            # Try to get the line item directly from GAM by Expresso ID
-            statement = {
-                'query': f'WHERE id = {expresso_line_item_id}',
-                'values': None
-            }
-            
-            try:
-                response = line_item_service.getLineItemsByStatement(statement)
-                if response and response['totalResultSetSize'] > 0:
-                    existing_line = response['results'][0]
-                    print(f"⚠️ Line item from Expresso already exists in GAM:")
-                    print(f"   - ID: {existing_line['id']}")
-                    print(f"   - Name: {existing_line['name']}")
-                    print(f"   - Order ID: {existing_line['orderId']}")
-                    print(f"   - Status: {existing_line['status']}")
-                    raise ValueError(f"Line item already exists in GAM with Expresso ID: {expresso_line_item_id}")
-                else:
-                    print(f"✅ Line item {expresso_line_item_id} not found in GAM - will create new line item")
-                    # Update line_item_data with Expresso details if available
-                    if expresso_line_item_details:
-                        print("📝 Using targeting details from Expresso:")
-                        targeting = expresso_line_item_details.get('Targeting', '')
-                        print(f"   - Targeting: {targeting}")
-                        # Here you can update line_item_data with more details from Expresso
-                        
-            except Exception as e:
-                if 'NOT_FOUND' not in str(e):
-                    print(f"⚠️ Error checking line item in GAM: {e}")
-                    print(f"⚠️ Error type: {type(e).__name__}")
-                print(f"✅ Will proceed with line item creation")
-                
-        except Exception as e:
-            print(f"⚠️ Error during GAM service call: {e}")
-            print(f"⚠️ Error type: {type(e).__name__}")
-            print(f"✅ Will proceed with line item creation")
-    
-    # Check if line name already exists in GAM using the cleaned name
-    if check_line_item_name_exists(client, order_id, cleaned_line_name):
-        # If it exists, append a unique suffix
-        unique_line_name = f"{cleaned_line_name}_C{int(time.time())%1000}"
-        print(f"📋 Line name exists, using modified name: {unique_line_name}")
+            # Different name structure - use as requested
+            print(f"ℹ️ Using requested line name as it differs from Expresso")
+            unique_line_name = line_name
     else:
-        # If it doesn't exist, use the cleaned name as-is
-        unique_line_name = cleaned_line_name
-        print(f"📋 Using cleaned line name as-is: {unique_line_name}")
+        print(f"ℹ️ No Expresso line item found - using requested name")
+        unique_line_name = line_name
     
-    print(f"🔄 Final line item name: '{unique_line_name}' (length: {len(unique_line_name)})")
+    # Check for existing line items in GAM and add timestamp if needed
+    gam_duplicate_exists = check_line_item_name_exists(client, order_id, unique_line_name)
+    
+    if gam_duplicate_exists:
+        print(f"⚠️ GAM duplicate detected - adding timestamp for uniqueness")
+        timestamp = int(time.time() * 1000)  # Millisecond timestamp for uniqueness
+        unique_line_name = f"{unique_line_name}_{timestamp}"
+    
+    print(f"🔄 Final line item name: {unique_line_name}")
     
     # End placement lookup, start line creation timing
     timing_checkpoints['placement_lookup_end'] = time.time()
@@ -1608,98 +1312,28 @@ def single_line(client, order_id, line_item_data, line_name):
             'timeUnit': 'LIFETIME'
         }]
 
-    # Attempt to create the line item with fallback for DUPLICATE_OBJECT errors
-    max_attempts = 5  # Increased from 3 to 5 for more fallback options
-    attempt = 0
-    line_item_id = None
-    
-    while attempt < max_attempts and line_item_id is None:
-        try:
-            attempt += 1
-            current_line_name = unique_line_name
-            
-            # If this is a retry attempt, generate a new unique name
-            if attempt > 1:
-                timestamp_suffix = int(time.time() * 1000) % 100000  # Use milliseconds for uniqueness
-                random_suffix = random.randint(10000, 99999)
-                
-                # Use different naming strategies for different attempts
-                if attempt == 2:
-                    current_line_name = f"{cleaned_line_name}_R{attempt}_{timestamp_suffix}"
-                elif attempt == 3:
-                    # More aggressive: truncate if too long and add unique suffix
-                    base_name = cleaned_line_name[:90] if len(cleaned_line_name) > 90 else cleaned_line_name
-                    current_line_name = f"{base_name}_RETRY_{timestamp_suffix}_{random_suffix}"
-                elif attempt == 4:
-                    # Ultimate fallback: use UUID for guaranteed uniqueness
-                    unique_id = str(uuid.uuid4())[:8]  # Use first 8 chars of UUID
-                    base_name = cleaned_line_name[:80] if len(cleaned_line_name) > 80 else cleaned_line_name
-                    current_line_name = f"{base_name}_UUID_{unique_id}_{timestamp_suffix}"
-                else:
-                    # Final attempt: completely different approach with short UUID
-                    unique_id = str(uuid.uuid4())[:12].replace('-', '')  # 12 chars, no hyphens
-                    # Use expresso ID if available for context
-                    expresso_part = f"EXP{expresso_id}" if expresso_id else "LINE"
-                    current_line_name = f"{expresso_part}_{unique_id}_{timestamp_suffix}"
-                
-                print(f"🔄 Retry attempt {attempt}: Using new unique name: '{current_line_name}' (length: {len(current_line_name)})")
-                
-                # Update the line item with the new name
-                line_item['name'] = current_line_name
-            
-            # Create the line item
-            print(f"🚀 Creating line item (attempt {attempt})...")
-            created_line_items = line_item_service.createLineItems([line_item])
-            line_item_id = created_line_items[0]['id']
-            unique_line_name = current_line_name  # Update the final name used
-            print(f"✅ Successfully created line item with ID: {line_item_id}")
-            
-            # End line creation, start creative creation timing
-            timing_checkpoints['line_creation_end'] = time.time()
-            timing_checkpoints['creative_creation_start'] = time.time()
-            
-            # Log successful line creation (we'll add creative IDs later)
-            logger.log_line_creation_success(
-                line_id=line_item_id,
-                creative_ids=[],  # Will be populated later
-                order_id=str(order_id),
-                line_name=unique_line_name,
-                session_id=session_id
-            )
-            
-        except Exception as e:
-            error_str = str(e)
-            print(f"🔍 Detailed error analysis for attempt {attempt}:")
-            print(f"   - Error type: {type(e).__name__}")
-            print(f"   - Error string: {error_str}")
-            
-            # Try to extract more details from the error if it's a SOAP fault
-            if hasattr(e, 'fault') and hasattr(e.fault, 'detail'):
-                print(f"   - SOAP fault details: {e.fault.detail}")
-            
-            if "DUPLICATE_OBJECT" in error_str and attempt < max_attempts:
-                print(f"❌ DUPLICATE_OBJECT error on attempt {attempt}. Details:")
-                print(f"   - Name used: '{current_line_name}' (length: {len(current_line_name)} chars)")
-                print(f"   - Order ID: {order_id}")
-                print(f"   - Will retry with a different name (attempt {attempt + 1}/{max_attempts})")
-                print(f"   - Error: {error_str}")
-                
-                # Add a small delay before retry to avoid potential rate limiting
-                time.sleep(0.5)
-                continue  # Try again with a new name
-            else:
-                # Either not a DUPLICATE_OBJECT error, or we've exhausted our attempts
-                if "DUPLICATE_OBJECT" in error_str:
-                    print(f"❌ DUPLICATE_OBJECT error persists after {max_attempts} attempts:")
-                    print(f"   - Final name used: '{current_line_name}' (length: {len(current_line_name)} chars)")
-                    print(f"   - Order ID: {order_id}")
-                    print(f"   - This suggests a deeper issue with name generation, order status, or API behavior")
-                    print(f"   - Recommendation: Check order status in GAM UI and verify no hidden constraints")
-                else:
-                    print(f"❌ Failed to create line item with different error: {e}")
-                
-                logger.log_line_creation_error(e, current_line_name, str(order_id), session_id)
-                raise
+    try:
+        created_line_items = line_item_service.createLineItems([line_item])
+        line_item_id = created_line_items[0]['id']
+        print(f"✅ Successfully created line item with ID: {line_item_id}")
+        
+        # End line creation, start creative creation timing
+        timing_checkpoints['line_creation_end'] = time.time()
+        timing_checkpoints['creative_creation_start'] = time.time()
+        
+        # Log successful line creation (we'll add creative IDs later)
+        logger.log_line_creation_success(
+            line_id=line_item_id,
+            creative_ids=[],  # Will be populated later
+            order_id=str(order_id),
+            line_name=unique_line_name,
+            session_id=session_id
+        )
+        
+    except Exception as e:
+        print(f"❌ Failed to create line item: {e}")
+        logger.log_line_creation_error(e, unique_line_name, str(order_id), session_id)
+        raise
 
     # Read tags from Excel only if file exists
     tag_dict = read_tag_file()
@@ -1874,15 +1508,6 @@ def single_line(client, order_id, line_item_data, line_name):
                                 use_template_id = 12435443  # AI template for JavaScript tags
                                 print(f"Using AI template ID: {use_template_id} for JavaScript tag")
                             
-                            # Check if this is a 2x creative
-                            creative_info = detected_creatives.get(original_size, {})
-                            is_2x = creative_info.get('is_2x', False)
-                            
-                            # If it's a 2x creative, use 2x template (override any existing template)
-                            if is_2x:
-                                use_template_id = 12459443
-                                print(f"Using 2x template (12459443) for {original_size} based on image name")
-                            
                             # Create the creative and associate it with the line item
                             new_creatives = create_custom_template_creatives(
                                 client, order_id, line_item_id,
@@ -1896,15 +1521,7 @@ def single_line(client, order_id, line_item_data, line_name):
                         creative_path = None
                         if original_size in detected_creatives:
                             creative_path = detected_creatives[original_size].get('image_path', '')
-                        # Check if this is a 2x creative
-                        creative_info = detected_creatives.get(original_size, {})
-                        is_2x = creative_info.get('is_2x', False)
-                        
-                        # If it's a 2x creative, use 2x template (override any existing template)
-                        if is_2x:
-                            use_template_id = 12459443
-                            print(f"Using 2x template (12459443) for {original_size} based on image name")
-                        elif creative_path and creative_path.lower().endswith('.html'):
+                        if creative_path and creative_path.lower().endswith('.html'):
                             use_template_id = 12435443
                             print(f"Using template ID 12435443 for HTML creative: {creative_path}")
                         new_creatives = create_custom_template_creatives(
@@ -2049,15 +1666,6 @@ def single_line(client, order_id, line_item_data, line_name):
                         
                         use_template_id = 12435443
                     
-                    # Check if this is a 2x creative for additional tag sizes
-                    creative_info = detected_creatives.get(tag_size, {})
-                    is_2x = creative_info.get('is_2x', False)
-                    
-                    # If it's a 2x creative, use 2x template (override any existing template)
-                    if is_2x:
-                        use_template_id = 12459443
-                        print(f"Using 2x template (12459443) for additional tag size {tag_size} based on image name")
-                    
                     new_creatives = create_custom_template_creatives(
                         client, order_id, line_item_id,
                         destination_url, expresso_id, tag_size, use_landing_page,
@@ -2195,9 +1803,9 @@ def single_line(client, order_id, line_item_data, line_name):
 
 if __name__ == '__main__':
     client = ad_manager.AdManagerClient.LoadFromStorage("googleads1.yaml") 
-    order_id = 3741465536
+    order_id = 3750012144
     timestamp = int(time.time())
-    line_name = f"27108910DOMEVENTURILROSINALCDMENGNEZSSTDBANNTILTESTARDBANNERPKG209336_{timestamp}"
+    line_name = f"27108910DOMEVENTURILROSINALLCPMENGNEZSSTDBANNTILTESTARDBANNERPKG209336_{timestamp}"
     line_item_data = {'cpm': 120.0, 'impressions': 1082500, 'site': ['TOI','VK'], 'platforms': ['WEB', 'MWEB', 'AMP'], 'destination_url': 'https://svkm.ac.in/', 'expresso_id': '271089',
                                                                     'landing_page': 'https://svkm.ac.in/', 'Impression_tracker': '', 
                       'Tracking_Tag': '', 'end_date': 13/4/2025, 'fcap': 0, 
@@ -2208,5 +1816,5 @@ if __name__ == '__main__':
     
     
     # detected_presets, image_files = fetch_images_and_presets(CREATIVES_FOLDER, available_presets, presets_dict)
-    # print("✅ Detected Presets:", detected_presets)
-    # print("🖼️ Image Files:", image_files)
+    # print("Detected Presets:", detected_presets)
+    # print(" Image Files:", image_files)

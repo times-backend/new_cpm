@@ -2,6 +2,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 def fetch_placements_ids(credentials_path, sheet_url, sheet_name, site_filter, platforms_filter, adtype_filters, richmedia_platform_map=None, line_type="standard"):
+    print("credentials_path::"+credentials_path)
     creds = Credentials.from_service_account_file(
         credentials_path,
         scopes=["https://www.googleapis.com/auth/spreadsheets"]
