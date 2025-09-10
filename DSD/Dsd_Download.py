@@ -5,14 +5,28 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
+import tempfile
+import shutil
 
 
 def setup_driver(download_dir):
+    import os, tempfile, shutil
+    from selenium import webdriver
+
     os.makedirs(download_dir, exist_ok=True)
+
+    # Ensure parent folder exists for temp profile
+    chrome_temp_dir = os.path.expanduser("~/chrome_temp")
+    os.makedirs(chrome_temp_dir, exist_ok=True)
+
+    temp_profile = tempfile.mkdtemp(prefix="chrome_profile_", dir=chrome_temp_dir)
+
     options = webdriver.ChromeOptions()
     options.add_argument("--start-maximized")
-    options.add_argument("--headless=new")  # Run in headless mode (use "new" for Chrome 109+)
+    options.add_argument("--headless=new")  # comment out to see browser locally
     options.add_argument("--disable-gpu")
+    options.add_argument(f"--user-data-dir={temp_profile}")
+
     prefs = {
         "download.default_directory": download_dir,
         "download.prompt_for_download": False,
@@ -20,7 +34,10 @@ def setup_driver(download_dir):
         "safebrowsing.enabled": True
     }
     options.add_experimental_option("prefs", prefs)
-    return webdriver.Chrome(options=options)
+
+    driver = webdriver.Chrome(options=options)
+    return driver, temp_profile
+
 
 def login(driver, username, password):
     driver.get("https://expresso.colombiaonline.com/expresso/home.htm")
@@ -117,14 +134,14 @@ def fetch_campaign_details(driver):
 
 def Dsd_Download(expresso_id):
     download_dir = os.path.abspath("downloads")
-    driver = setup_driver(download_dir)
+    driver, temp_profile = setup_driver(download_dir)
     downloaded_file = None  # Initialize to None
 
     try:
         login(driver, "anurag.mishra1@timesinternet.in", "Times@9899")
         search_expresso_id(driver, expresso_id)
         switch_to_new_tab(driver)
-        order_name,advertiser_name=fetch_campaign_details(driver)
+        order_name, advertiser_name = fetch_campaign_details(driver)
         before_download = find_and_download_file(driver, download_dir)
         if before_download:
             downloaded_file = wait_for_download(download_dir, before_download)
@@ -132,9 +149,10 @@ def Dsd_Download(expresso_id):
                 print("Downloaded Excel file:", downloaded_file)
             else:
                 print("Download timed out or failed.")
-        return order_name,advertiser_name,downloaded_file
+        return order_name, advertiser_name, downloaded_file
     finally:
         driver.quit()
+        shutil.rmtree(temp_profile, ignore_errors=True)
 
 if __name__ == "__main__":
     expresso_id="265810"
