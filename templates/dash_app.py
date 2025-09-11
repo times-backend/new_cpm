@@ -39,7 +39,7 @@ from DSD.Dsd_Download import Dsd_Download
 from dsd_read import load_dsd
 from fetch_expresso_details import fetch_full_expresso_details
 from auth_utils import generate_jwt, username, plaintext_password
-
+from bigquery_fetch import fetch_expresso_data
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.FLATLY], assets_folder=assets_folder, suppress_callback_exceptions=True)
 server = app.server
 
@@ -830,6 +830,7 @@ def handle_all_inputs(submit_n, clear_n, order_option_trigger, upload_contents, 
 
             # Fetch expresso details with timeout handling
             try:
+                print("@@@@@@")
                 expresso_details = fetch_full_expresso_details(str(expresso_number))
                 if expresso_details:
                     print(f"Expresso Details: {expresso_details}")
@@ -892,7 +893,7 @@ def handle_all_inputs(submit_n, clear_n, order_option_trigger, upload_contents, 
             try:
                 if not order_id or order_id == 'None' or order_id is None:
                     # Create new order name
-                    order_name,advertiser_name,dsd_file_path=Dsd_Download(expresso_number)
+                    order_name,advertiser_name=fetch_expresso_data(expresso_number)
                     trafficker_name = "Nitesh Pandey"
                     current_month = datetime.now().strftime("%B")
                     current_day = datetime.now().strftime("%d")
