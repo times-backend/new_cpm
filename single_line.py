@@ -53,9 +53,9 @@ richmedia_presets_dict = {
     "320x100": {"adtypes": ["TOPBANNER", "TOPBANNER", "TOPBANNER" ], "sections": ["ROS", "HP", "HOME"], "platforms": ["MWEB"]},
     "300x600": {"adtypes": ["TOWER"], "sections": ["ROS", "HP", "HOME"], "platforms": ["WEB"]},
     "728x90": {"adtypes": ["LEADERBOARD"], "sections": ["ROS", "HP", "HOME"], "platforms": ["WEB", "MWEB", "AMP"]},
-    "320x50": {"adtypes": ["BOTTOMOVERLAY","BOTTOM OVERLAY"], "sections": ["ROS", "HP", "HOME"]},
+    "320x50": {"adtypes": ["BOTTOMOVERLAY","BOTTOM OVERLAY"], "sections": ["ROS", "HP", "HOME"],"platforms": ["MWEB","AMP" ]},
     "320x480": {"adtypes": ["INTERSTITIAL"], "sections": ["ROS", "HP", "HOME"]},
-    "980x200": {"adtypes": ["LEADERBOARD"], "sections": ["ROS"]},
+    "980x200": {"adtypes": ["LEADERBOARD"], "sections": ["ROS"], "platforms": ["WEB"] },
     # ... add more as needed
 }
 
@@ -315,10 +315,10 @@ def read_tag_file():
                 # Look for exact column names first
                 for col in df.columns:
                     col_str = str(col).lower()
-                    if col_str == 'dimensions' or col_str == 'placementname':
+                    if col_str == 'Dimensions' or col_str == 'placementname':
                         dimension_col = col
                         print(f"Using exact match '{col}' as dimension column")
-                    elif col_str == 'javascript tag' or col_str == 'js_https':
+                    elif col_str == 'javascript tag' or col_str == 'js_https' or col_str == 'js_https':
                         tag_col = col
                         print(f"Using exact match '{col}' as tag column")
                     elif col_str == 'impression tag (image)' or col_str == 'impression tag':
@@ -333,10 +333,20 @@ def read_tag_file():
                 if not dimension_col:
                     for col in df.columns:
                         col_str = str(col).lower()
-                        if 'dimension' in col_str or 'size' in col_str or 'placement' in col_str:
+                        # Prioritize 'dimension' over 'placement' to get actual dimensions like '300x250'
+                        if 'dimension' in col_str or 'size' in col_str:
                             dimension_col = col
                             print(f"Using partial match '{col}' as dimension column")
                             break
+                    
+                    # If still no dimension column found, try placement as fallback
+                    if not dimension_col:
+                        for col in df.columns:
+                            col_str = str(col).lower()
+                            if 'placement' in col_str:
+                                dimension_col = col
+                                print(f"Using fallback '{col}' as dimension column")
+                                break
                 
                 if not tag_col:
                     for col in df.columns:
@@ -1817,5 +1827,5 @@ if __name__ == '__main__':
     
     
     # detected_presets, image_files = fetch_images_and_presets(CREATIVES_FOLDER, available_presets, presets_dict)
-    # print("Detected Presets:", detected_presets)
-    # print(" Image Files:", image_files)
+    # print("✅ Detected Presets:", detected_presets)
+    # print("🖼️ Image Files:", image_files)
